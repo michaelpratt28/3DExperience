@@ -1,0 +1,446 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <title>Michael Pratt</title>
+    <meta charset="utf-8" />
+    <link href="CSS/LookinGood.css" rel="stylesheet" />
+
+    <script src="JS/HotScriptAction.js"></script>
+    <script src="JS/jQuery/jquery-2.2.0.min.js"></script>
+    <script src="JS/THREE/three.min.js"></script>
+    <script src="JS/THREE/Detector.js"></script>
+    <script src="JS/THREEx/THREEx.FullScreen.js"></script>
+    <script src="JS/THREEx/THREEx.KeyboardState.js"></script>
+    <script src="JS/THREEx/THREEx.WindowResize.js"></script>
+    <script src="JS/ParticleControl/ParticleEngine.js"></script>
+    <script src="JS/ParticleControl/Starfield.js"></script>
+    <script src="JS/THREE/OrbitControls.js"></script>
+
+    <script>
+        //-----------------------------------------
+
+        var container, scene, camera, renderer, controls, stats;
+        var group;
+        var mouseX = 0, mouseY = 0;
+
+        var windowHalfX = window.innerWidth / 2;
+        var windowHalfY = window.innerHeight / 2;
+
+        var keyboard = new THREEx.KeyboardState();
+        var clock = new THREE.Clock();
+
+        // custom global variables
+        var mirrorSphere, mirrorSphereCamera; // for mirror material
+        //var mirrorTri, mirrorTriCamera; // for mirror material
+
+        var skyBox, sol1, sol2;
+        var sol1Fade = true, sol2Fade = false, flare = true;
+
+        $(document).ready(function () {
+            init();
+            animate();
+
+            var audioElement = document.createElement('audio');
+            audioElement.setAttribute('src', 'AUDIO/DayOne.mp3');
+            audioElement.setAttribute('autoplay', 'autoplay');
+            //audioElement.load()
+
+            $.get();
+
+            audioElement.addEventListener("load", function () {
+                audioElement.play();
+            }, true);
+
+        });
+
+        // FUNCTIONS
+        function init() {
+
+            // SCENE
+            scene = new THREE.Scene();
+            group = new THREE.Group();
+            scene.add(group);
+
+            // CAMERA
+            var SCREEN_WIDTH = window.innerWidth, SCREEN_HEIGHT = window.innerHeight;
+            var VIEW_ANGLE = 45, ASPECT = SCREEN_WIDTH / SCREEN_HEIGHT, NEAR = 0.1, FAR = 20000; 
+            camera = new THREE.PerspectiveCamera(VIEW_ANGLE, ASPECT, NEAR, FAR);
+            scene.add(camera);
+            camera.position.set(0, 0, 450);
+            camera.lookAt(scene.position);
+
+            // RENDERER
+            if (Detector.webgl)
+                renderer = new THREE.WebGLRenderer({ antialias: true });
+            else
+                renderer = new THREE.CanvasRenderer();
+
+            renderer.setSize(SCREEN_WIDTH, SCREEN_HEIGHT);
+
+            container = document.getElementById('ThreeJS');
+            container.appendChild(renderer.domElement);
+
+            // EVENTS
+            THREEx.WindowResize(renderer, camera);
+            //THREEx.FullScreen.bindKey({ charCode: 'm'.charCodeAt(0) }); // don't need
+
+            // CONTROLS
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+            // SKYBOX
+            var geometry = new THREE.SphereGeometry(3000, 60, 40); //SphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength)
+            var uniforms = {
+                texture: { type: 't', value: THREE.ImageUtils.loadTexture('TEXTURES/HotGalacticAction.jpg') }
+            };
+
+            var material = new THREE.ShaderMaterial({
+                uniforms: uniforms,
+                vertexShader: document.getElementById('sky-vertex').textContent,
+                fragmentShader: document.getElementById('sky-fragment').textContent
+            });
+
+            skyBox = new THREE.Mesh(geometry, material);
+            skyBox.scale.set(-1, 1, 1);
+            skyBox.eulerOrder = 'XZY';
+            skyBox.renderDepth = 1000.0;
+            scene.add(skyBox);
+
+            // CUSTOM GEOMETRY
+            var sphereGeom = new THREE.SphereGeometry(100, 60, 40); // radius, segmentsWidth, segmentsHeight
+            mirrorSphereCamera = new THREE.CubeCamera(0.1, 6000, 612); //(0.1, 5000, 512) CubeCamera(near, far, cubeResolution) near/far: clipping distace, cubeRes: width of the cube
+            //mirrorSphereCamera.renderTarget.minFilter = THREE.LinearMipMapLinearFilter; // Soften-blur the edge of the sphere
+            scene.add(mirrorSphereCamera);
+
+            var mirrorSphereMaterial = new THREE.MeshBasicMaterial({ envMap: mirrorSphereCamera.renderTarget });
+            mirrorSphere = new THREE.Mesh(sphereGeom, mirrorSphereMaterial);
+            mirrorSphere.position.set(0, 0, 0);
+            mirrorSphereCamera.position = mirrorSphere.position;
+            scene.add(mirrorSphere);
+
+            //var sphereGeo = new THREE.SphereGeometry(100, 60, 40);
+            //var material = new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: .7 });
+            //var sphere = new THREE.Mesh(sphereGeo, material);
+            //sphere.position.set(-720, -50, -1950);
+            //scene.add(sphere);
+
+            // JS GEOMETERY
+            var loader = new THREE.JSONLoader();
+            //loader.load("MODELS/Tri.js", function (geometry) {
+            //    mirrorTriCamera = new THREE.CubeCamera(0.1, 5000, 512); //CubeCamera(near, far, cubeResolution) near/far: clipping distace, cubeRes: width of the cube
+            //    var mirrorMaterial = new THREE.MeshBasicMaterial({ envMap: mirrorTriCamera.renderTarget });
+            //    mirrorTri = new THREE.Mesh(geometry, mirrorMaterial);
+            //    mirrorTri.position.set(0, 0, 0);
+            //    mirrorTriCamera.position = mirrorTri.position;
+            //    scene.add(mirrorTri);
+
+            //    //var material = new THREE.MeshLambertMaterial({ color: 0x55B663 });
+            //    //mesh = new THREE.Mesh(geometry, material);
+            //    //scene.add(mesh);
+            //});
+
+            // PARTICLES
+            var particleTexture = THREE.ImageUtils.loadTexture('IMAGES/sphereStar.png');
+            particleGroup = new THREE.Object3D();
+            particleAttributes = { startSize: [], startPosition: [], randomness: [] };
+
+            var totalParticles = 1750;
+            var radiusRange = 2000;
+            for (var i = 0; i < totalParticles; i++) {
+                var spriteMaterial = new THREE.SpriteMaterial({ map: particleTexture, useScreenCoordinates: false, color: 0xffffff });
+
+                var sprite = new THREE.Sprite(spriteMaterial);
+
+                // SCALE
+                sprite.scale.set(7, 7, 1.0); // imageWidth, imageHeight
+
+                // POSITION
+                sprite.position.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5);
+                // for a cube:
+                // sprite.position.multiplyScalar( radiusRange );
+                // for a solid sphere:
+                // sprite.position.setLength( radiusRange * Math.random() );
+                // for a spherical shell:
+                sprite.position.setLength(radiusRange * (Math.random() * 0.78 + 0.2)); // sprite.position.setLength(radiusRange * (Math.random() * 0.1 + 0.9));
+
+                // COLOR
+                // sprite.color.setRGB( Math.random(),  Math.random(),  Math.random() ); 
+                //sprite.material.color.setHSL(Math.random(), 0.9, 0.7);
+
+                sprite.opacity = 0.50; // translucent particles
+                sprite.material.blending = THREE.AdditiveBlending; // "glowing" particles
+
+                particleGroup.add(sprite);
+                // add variable qualities to arrays, if they need to be accessed later
+                particleAttributes.startPosition.push(sprite.position.clone());
+                particleAttributes.randomness.push(Math.random());
+            }
+            particleGroup.position.y = 0;
+            scene.add(particleGroup);
+
+            
+            // PARTICLE ENGINE
+            //this.engine = new ParticleEngine();
+            //engine.setValues(Controls.starfield);
+            //engine.initialize();
+
+            // LENS FLARE
+            //var material = new THREE.SpriteMaterial({ map: THREE.ImageUtils.loadTexture('TEXTURES/LensFlares/lensflare0_alpha2.png'), transparent: true, opacity: 1, color: 0xFFFFFF });
+            //sol1 = new THREE.Sprite(material);
+            //sol1.scale.set(3000, 3000, 1.0);
+            //sol1.position.set(-650, 100, -2000);
+            //scene.add(sol1);
+
+            //var material = new THREE.SpriteMaterial({ map: THREE.ImageUtils.loadTexture('TEXTURES/LensFlares/lensflare0_alpha2rot.png'), transparent: true, opacity: 0, color: 0xFFFFFF });
+            //sol2 = new THREE.Sprite(material);
+            //sol2.scale.set(3000, 3000, 1.0);
+            //sol2.position.set(-750, 0, -2000);
+            //scene.add(sol2);
+
+
+            //var textureLoader = new THREE.TextureLoader();
+            //var textureFlare0 = textureLoader.load("TEXTURES/LensFlares/lensflare0_alpha2.png");
+            //var textureFlare2 = textureLoader.load("TEXTURES/LensFlares/lensflare2.png");
+            //var textureFlare3 = textureLoader.load("TEXTURES/LensFlares/lensflare3.png");
+
+            //addLight(0, 0, 1, 0, 0, -2500);
+            
+            //function addLight(h, s, l, x, y, z) {
+            //    var light = new THREE.PointLight(0xffffff, 1.5, 2000);
+            //    light.color.setHSL(h, s, l);
+            //    light.position.set(x, y, z);
+            //    scene.add(light);
+
+            //    var flareColor = new THREE.Color(0xffffff);
+            //    flareColor.setHSL(h, s, l + 0.5);
+
+            //    var lensFlare = new THREE.LensFlare(textureFlare0, 700, 0.0, THREE.AdditiveBlending, flareColor);
+            //    lensFlare.add(textureFlare2, 512, 0.0, THREE.AdditiveBlending);
+            //    lensFlare.add(textureFlare2, 512, 0.0, THREE.AdditiveBlending);
+            //    lensFlare.add(textureFlare2, 512, 0.0, THREE.AdditiveBlending);
+            //    lensFlare.add(textureFlare3, 60, 0.6, THREE.AdditiveBlending);
+            //    lensFlare.add(textureFlare3, 70, 0.7, THREE.AdditiveBlending);
+            //    lensFlare.add(textureFlare3, 120, 0.9, THREE.AdditiveBlending);
+            //    lensFlare.add(textureFlare3, 70, 1.0, THREE.AdditiveBlending);
+            //    //lensFlare.customUpdateCallback = lensFlareUpdateCallback;
+            //    lensFlare.position.copy(light.position);
+            //    scene.add(lensFlare);
+            //}
+
+
+
+            // TRACK MOUSE MOVEMENTS
+            document.addEventListener('mousemove', onDocumentMouseMove, false);
+        }
+
+        var particleGroup, particleAttributes;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            render();
+            update();
+        }
+
+        var tload;
+        function update() {
+            //if (keyboard.pressed("1")) {
+            //    var uniforms = {
+            //        texture: { type: 't', value: THREE.ImageUtils.loadTexture('TEXTURES/GalacticAwesome.jpg') }
+            //    };
+
+            //    var material = new THREE.ShaderMaterial({
+            //        uniforms: uniforms,
+            //        vertexShader: document.getElementById('sky-vertex').textContent,
+            //        fragmentShader: document.getElementById('sky-fragment').textContent
+            //    });
+            //    skyBox.material = material;
+            //}
+            //if (keyboard.pressed("2")) {
+            //    var uniforms = {
+            //        texture: { type: 't', value: THREE.ImageUtils.loadTexture('TEXTURES/GalacticAwesome2.jpg') }
+            //    };
+
+            //    var material = new THREE.ShaderMaterial({
+            //        uniforms: uniforms,
+            //        vertexShader: document.getElementById('sky-vertex').textContent,
+            //        fragmentShader: document.getElementById('sky-fragment').textContent
+            //    });
+            //    skyBox.material = material;
+            //}
+            //if (keyboard.pressed("3")) {
+            //    var uniforms = {
+            //        texture: { type: 't', value: THREE.ImageUtils.loadTexture('TEXTURES/GalacticAwesome3.jpg') }
+            //    };
+
+            //    var material = new THREE.ShaderMaterial({
+            //        uniforms: uniforms,
+            //        vertexShader: document.getElementById('sky-vertex').textContent,
+            //        fragmentShader: document.getElementById('sky-fragment').textContent
+            //    });
+            //    skyBox.material = material;
+            //}
+            //if (keyboard.pressed("4")) {
+            //    var uniforms = {
+            //        texture: { type: 't', value: THREE.ImageUtils.loadTexture('TEXTURES/GalacticAwesome4.jpg') }
+            //    };
+
+            //    var material = new THREE.ShaderMaterial({
+            //        uniforms: uniforms,
+            //        vertexShader: document.getElementById('sky-vertex').textContent,
+            //        fragmentShader: document.getElementById('sky-fragment').textContent
+            //    });
+            //    skyBox.material = material;
+            //}
+            //if (keyboard.pressed("5")) {
+            //    var uniforms = {
+            //        texture: { type: 't', value: THREE.ImageUtils.loadTexture('TEXTURES/GalacticAwesome5.jpg') }
+            //    };
+
+            //    var material = new THREE.ShaderMaterial({
+            //        uniforms: uniforms,
+            //        vertexShader: document.getElementById('sky-vertex').textContent,
+            //        fragmentShader: document.getElementById('sky-fragment').textContent
+            //    });
+            //    skyBox.material = material;
+            //}
+            //if (keyboard.pressed("f")) {
+            //    flare = !flare;
+            //    if (!flare) {
+            //        sol1.material.opacity = 0;
+            //        //sol2.material.opacity = -1;
+            //    }
+            //    else {
+            //        sol1.material.opacity = 1;
+            //        //sol2.material.opacity = 0;
+            //    }
+            //}
+
+            var time = 0.01 * clock.getElapsedTime();
+
+            for (var c = 0; c < particleGroup.children.length; c++) {
+                var sprite = particleGroup.children[c];
+                // particle wiggle
+                // var wiggleScale = 2;
+                // sprite.position.x += wiggleScale * (Math.random() - 0.5);
+                // sprite.position.y += wiggleScale * (Math.random() - 0.5);
+                // sprite.position.z += wiggleScale * (Math.random() - 0.5);
+
+                // pulse away/towards center
+                // individual rates of movement
+                var a = particleAttributes.randomness[c] + 1;
+                var pulseFactor = Math.sin(a * time) * 0.1 + 0.9;
+                sprite.position.x = particleAttributes.startPosition[c].x * pulseFactor;
+                sprite.position.y = particleAttributes.startPosition[c].y * pulseFactor;
+                sprite.position.z = particleAttributes.startPosition[c].z * pulseFactor;
+            }
+            // ROTATION: rotate the entire group
+            // particleGroup.rotation.x = time * 0.5;
+            // particleGroup.rotation.y = time * 0.75;
+            // particleGroup.rotation.z = time * 1.0;
+
+            //var dt = clock.getDelta();
+            //engine.update(dt * 0.5);
+
+            // ORBITAL CONTROL
+            controls.update();
+
+            // MOUSE MOVEMENT CONTROL
+            camera.position.x += (mouseX - camera.position.x) * 0.15 * 0.004;
+            camera.position.y += (-mouseY - camera.position.y) * 0.15 * 0.004;
+            camera.lookAt(scene.position);
+
+            // SUN1 FADE IN/OUT
+            //if (Math.round(sol1.material.opacity * 100) / 100 > 0.00 && sol1Fade) {
+            //    sol1.material.opacity -= 0.005;
+            //}
+            //if (Math.round(sol1.material.opacity * 100) / 100 == 0.00) {
+            //    sol1Fade = !sol1Fade;
+            //}
+            //if (Math.round(sol1.material.opacity * 100) / 100 < 1.00 && !sol1Fade) {
+            //    sol1.material.opacity += 0.005;
+            //}
+            //if (Math.round(sol1.material.opacity * 100) / 100 == 1.00) {
+            //    sol1Fade = !sol1Fade;
+            //}
+            //// SUN2 FADE IN/OUT
+            //if (Math.round(sol2.material.opacity * 100) / 100 > 0.00 && sol2Fade) {
+            //    sol2.material.opacity -= 0.005;
+            //}
+            //if (Math.round(sol2.material.opacity * 100) / 100 == 0.00) {
+            //    sol2Fade = !sol2Fade;
+            //}
+            //if (Math.round(sol2.material.opacity * 100) / 100 < 1.00 && !sol2Fade) {
+            //    sol2.material.opacity += 0.005;
+            //}
+            //if (Math.round(sol2.material.opacity * 100) / 100 == 1.00) {
+            //    sol2Fade = !sol2Fade;
+            //}
+
+
+        }
+
+        function render() {
+            // move the CubeCamera to the position of the object
+            //    that has a reflective surface, "take a picture" in each direction
+            //    and apply it to the surface.
+            // need to hide surface before and after so that it does not
+            //    "get in the way" of the camera
+
+            mirrorSphere.visible = false;
+            mirrorSphereCamera.updateCubeMap(renderer, scene);
+            mirrorSphere.visible = true;
+
+            //mirrorTri.visible = false;
+            //mirrorTriCamera.updateCubeMap(renderer, scene);
+            //mirrorTri.visible = true;
+
+            renderer.render(scene, camera);
+        }
+
+        //function lensFlareUpdateCallback(object) {
+        //    var f, fl = object.lensFlares.length;
+        //    var flare;
+        //    var vecX = -object.positionScreen.x * 2;
+        //    var vecY = -object.positionScreen.y * 2;
+        //    for (f = 0; f < fl; f++) {
+        //        flare = object.lensFlares[f];
+        //        flare.x = object.positionScreen.x + vecX * flare.distance;
+        //        flare.y = object.positionScreen.y + vecY * flare.distance;
+        //        flare.rotation = 0;
+        //    }
+        //    object.lensFlares[2].y += 0.025;
+        //    object.lensFlares[3].rotation = object.positionScreen.x * 0.5 + THREE.Math.degToRad(45);
+        //}
+
+        function onDocumentMouseMove(event) {
+            mouseX = (event.clientX - windowHalfX);
+            mouseY = (event.clientY - windowHalfY);
+        }
+
+    </script>
+
+
+    <script type="application/x-glsl" id="sky-vertex">
+        varying vec2 vUV;
+
+        void main() {
+            vUV = uv;
+            vec4 pos = vec4(position, 1.0);
+            gl_Position = projectionMatrix * modelViewMatrix * pos;
+        }
+    </script>
+
+    <script type="application/x-glsl" id="sky-fragment">
+        uniform sampler2D texture;
+        varying vec2 vUV;
+
+        void main() {
+            vec4 sample = texture2D(texture, vUV);
+            gl_FragColor = vec4(sample.xyz, sample.w);
+        }
+    </script>
+
+</head>
+<body>
+    <div id="ThreeJS"></div>
+</body>
+</html>
